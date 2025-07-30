@@ -584,8 +584,8 @@ class RayPPOTrainer:
             dataset=self.val_dataset,
             batch_size=val_batch_size,
             num_workers=self.config.data.get("dataloader_num_workers", 8),
-            shuffle=False,
-            drop_last=False,
+            shuffle=True,
+            drop_last=True,
             collate_fn=collate_fn,
         )
 
