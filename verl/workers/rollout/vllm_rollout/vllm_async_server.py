@@ -56,7 +56,7 @@ class ExternalRayDistributedExecutor(Executor):
 
         # Make sure subprocess in same namespace as parent actor.
         # actor name format: {name_prefix}WorkerDict_{pg_idx}:{local_rank}
-        ray.init(namespace=namespace)
+        ray.init(address="auto", namespace=namespace, ignore_reinit_error=True)
         actor_names = [actor_name for actor_name in ray.util.list_named_actors() if actor_name.startswith(f"{wg_prefix}WorkerDict") or actor_name.startswith(f"{wg_prefix}ActorRolloutRefWorker")]
 
         vllm_tp_size = self.vllm_config.parallel_config.tensor_parallel_size
@@ -189,6 +189,7 @@ class AsyncvLLMServer(AsyncServerBase):
             seed=self.vllm_dp_rank,
             max_num_seqs=256,
             hf_overrides={"max_position_embeddings": max_model_len},
+            disable_cascade_attn=True,
         )
 
         # init async llm engine
