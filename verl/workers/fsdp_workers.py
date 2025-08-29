@@ -321,6 +321,7 @@ class ActorRolloutRefWorker(Worker):
         cpu_offload = None if role == "actor" else CPUOffload(offload_params=True)
         fsdp_strategy = self.config.actor.strategy
         if fsdp_strategy == "fsdp":
+            # import ipdb; ipdb.set_trace()
             actor_module_fsdp = FSDP(
                 actor_module,
                 cpu_offload=cpu_offload,
@@ -666,6 +667,8 @@ class ActorRolloutRefWorker(Worker):
             data = self.ulysses_sharding_manager.preprocess_data(data=data)
             # perform training
             with Timer(name="update_policy", logger=None) as timer:
+                # import ipdb 
+                # ipdb.set_trace()
                 metrics = self.actor.update_policy(data=data)
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]

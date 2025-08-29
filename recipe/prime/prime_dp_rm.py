@@ -48,6 +48,8 @@ class DataParallelPRIMERewardModel:
         self.ulysses_sequence_parallel_size = self.config.get("ulysses_sequence_parallel_size", 1)
 
     def _forward_micro_batch(self, micro_batch, prompt_length):
+        import ipdb 
+        ipdb.set_trace()
         input_ids = micro_batch["input_ids"]
         batch_size, seqlen = input_ids.shape
         attention_mask = micro_batch["attention_mask"]

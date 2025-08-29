@@ -80,6 +80,8 @@ class DataParallelPPOActor(BasePPOActor):
             entropy: # (bs, response_len)
             log_probs: # (bs, response_len)
         """
+        # import ipdb
+        # ipdb.set_trace()
         response_length = micro_batch["responses"].size(-1)
         multi_modal_inputs = {}
         if "multi_modal_inputs" in micro_batch:
@@ -91,6 +93,11 @@ class DataParallelPPOActor(BasePPOActor):
             batch_size, seqlen = input_ids.shape
             attention_mask = micro_batch["attention_mask"]
             position_ids = micro_batch["position_ids"]
+            print("="*100)
+            print("\n\n")
+            print(f"pre-sequence reshaping: {input_ids.size()}")
+            print("="*100)
+            print("\n\n")
             entropy = None
             if position_ids.dim() == 3:  # qwen2vl mrope
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
@@ -137,6 +144,14 @@ class DataParallelPPOActor(BasePPOActor):
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
 
+                # import ipdb
+                # ipdb.set_trace()
+                print("="*100 + "\n\n")
+                print("Sizes for input ids")
+                print(input_ids_rmpad.size())
+                print(position_ids.size())
+                print("\n\n")
+                print("=*100")
                 output = self.actor_module(
                     input_ids=input_ids_rmpad,
                     attention_mask=None,
