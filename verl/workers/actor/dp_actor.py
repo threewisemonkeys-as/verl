@@ -98,6 +98,7 @@ class DataParallelPPOActor(BasePPOActor):
             print(f"pre-sequence reshaping: {input_ids.size()}")
             print("="*100)
             print("\n\n")
+            # import ipdb; ipdb.set_trace()
             entropy = None
             if position_ids.dim() == 3:  # qwen2vl mrope
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
