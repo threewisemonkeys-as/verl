@@ -27,7 +27,7 @@ from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ChatCompleti
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
-from vllm.v1.engine.async_llm import AsyncLLM
+from vllm.v1.engine.async_llm import AsyncLLMEngine
 from vllm.v1.executor.abstract import Executor
 from vllm.worker.worker_base import WorkerWrapperBase
 from vllm.distributed.device_communicators.cuda_communicator import (
@@ -139,7 +139,7 @@ class AsyncvLLMServer(AsyncServerBase):
         self.vllm_dp_size = vllm_dp_size
         self.vllm_dp_rank = vllm_dp_rank
         self.wg_prefix = wg_prefix
-        self.engine: AsyncLLM = None
+        self.engine: AsyncLLMEngine = None
 
     async def init_engine(self):
         """Init vLLM AsyncLLM engine."""
@@ -196,7 +196,7 @@ class AsyncvLLMServer(AsyncServerBase):
         vllm_config = engine_args.create_engine_config()
         namespace = ray.get_runtime_context().namespace
         vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
-        self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        self.engine = AsyncLLMEngine.from_vllm_config(vllm_config)
 
         # build serving chat
         model_config = self.engine.model_config
