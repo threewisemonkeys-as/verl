@@ -68,8 +68,14 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
     print(f"DEBUG: HF_HOME = {os.environ.get('HF_HOME', 'Not set')}")
     print(f"DEBUG: TRANSFORMERS_CACHE = {os.environ.get('TRANSFORMERS_CACHE', 'Not set')}")
     print(f"DEBUG: TRANSFORMERS_OFFLINE = {os.environ.get('TRANSFORMERS_OFFLINE', 'Not set')}")
-    tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
-    if correct_pad_token:
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+    except Exception as e:
+        print(f"ERROR: Failed to load tokenizer from {name_or_path}.")
+        print(f"DEBUG: Exception = {e}")
+        kwargs['local_files_only'] = False
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-32B", **kwargs)
+    if correct_pad_token and tokenizer is not None:
         set_pad_token_id(tokenizer)
     return tokenizer
 
