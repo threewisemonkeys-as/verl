@@ -58,8 +58,16 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
         kwargs["eos_token_id"] = 107
     if os.path.exists(name_or_path):
         kwargs['local_files_only'] = True
+        kwargs['trust_remote_code'] = True
     print(f"DEBUG: name_or_path = {repr(name_or_path)}")
     print(f"DEBUG: kwargs = {kwargs}")
+    print(f"DEBUG: Current working directory = {os.getcwd()}")
+    print(f"DEBUG: Path exists = {os.path.exists(name_or_path)}")
+    import sys
+    print(f"DEBUG: Python path = {sys.path[:3]}...")  # First 3 entries
+    print(f"DEBUG: HF_HOME = {os.environ.get('HF_HOME', 'Not set')}")
+    print(f"DEBUG: TRANSFORMERS_CACHE = {os.environ.get('TRANSFORMERS_CACHE', 'Not set')}")
+    print(f"DEBUG: TRANSFORMERS_OFFLINE = {os.environ.get('TRANSFORMERS_OFFLINE', 'Not set')}")
     tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
     if correct_pad_token:
         set_pad_token_id(tokenizer)
