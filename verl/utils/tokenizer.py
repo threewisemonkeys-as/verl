@@ -14,6 +14,7 @@
 """Utils for tokenization."""
 
 import warnings
+import os
 
 __all__ = ["hf_tokenizer", "hf_processor"]
 
@@ -55,11 +56,10 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
         warnings.warn("Found gemma-2-2b-it tokenizer. Set eos_token and eos_token_id to <end_of_turn> and 107.", stacklevel=1)
         kwargs["eos_token"] = "<end_of_turn>"
         kwargs["eos_token_id"] = 107
-    if "mnt" in name_or_path: 
-        local_files_only = True
-    else:
-        local_files_only = False
-    kwargs["local_files_only"] = local_files_only
+    if os.path.exists(name_or_path):
+        kwargs['local_files_only'] = True
+    print(f"DEBUG: name_or_path = {repr(name_or_path)}")
+    print(f"DEBUG: kwargs = {kwargs}")
     tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
     if correct_pad_token:
         set_pad_token_id(tokenizer)
