@@ -197,6 +197,7 @@ class AsyncvLLMServer(AsyncServerBase):
         namespace = ray.get_runtime_context().namespace
         vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
         self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        print(f"AsyncLLM Model: {self.engine.model_config.model}")
 
         # build serving chat
         model_config = self.engine.model_config
