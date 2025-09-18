@@ -293,6 +293,8 @@ class DataParallelPPOActor(BasePPOActor):
         elif use_dynamic_bsz:
             # split using dynamic bsz
             max_token_len = data.meta_info["max_token_len"] * self.ulysses_sequence_parallel_size
+            print(f'data.meta_info["max_token_len"]={data.meta_info["max_token_len"]}, self.ulysses_sequence_parallel_size={self.ulysses_sequence_parallel_size}')
+            print(f"Rearranging micro batches since use_dynamic_bsz={use_dynamic_bsz} with max_token_len={max_token_len}")
             micro_batches, indices = rearrange_micro_batches(batch=batch, max_token_len=max_token_len)
         else:
             micro_batches = batch.split(micro_batch_size)
