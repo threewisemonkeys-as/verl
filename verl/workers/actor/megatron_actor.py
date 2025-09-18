@@ -166,6 +166,7 @@ class MegatronPPOActor(BasePPOActor):
         Returns:
             DataProto: torch.Tensor: the log_prob tensor
         """
+        print(f"Running megatron actor comput_log_prob")
         data.batch = data.batch.contiguous()
         use_dynamic_bsz = data.meta_info.get("use_dynamic_bsz", False)
         micro_batch_size = data.meta_info.get("micro_batch_size", None)
@@ -184,7 +185,7 @@ class MegatronPPOActor(BasePPOActor):
         # We make recompute_old_log_prob by default here.
         # TODO (zhangchi.usc1992): actually, this function should only return log_prob and this logic should be handled by user outside
         recompute_old_log_prob = self.config.get("recompute_old_log_prob", True)
-
+        print(f"megatron actor compute_log_prob: recompute_old_log_prob={recompute_old_log_prob}, max_token_len={max_token_len}, micro_batch_size={micro_batch_size}, use_dynamic_bsz={use_dynamic_bsz}")
         entropys = torch.Tensor()
         if recompute_old_log_prob:
             select_keys = ["responses", "input_ids", "attention_mask", "position_ids"]
@@ -193,7 +194,9 @@ class MegatronPPOActor(BasePPOActor):
             batch_size = input_ids.size(0)
             response = batch["responses"]
             response_length = response.size(1)
+            print(f"megatron actor compute_log_prob: response_length={response_length}, input_ids.shape={input_ids}")
             with torch.no_grad():
+                print(f"megatron actor compute_log_prob: Forward backward batch")
                 output = self.forward_backward_batch(data, forward_only=True, post_process_fn=compute_logprobs_fn, calculate_entropy=calculate_entropy, use_dynamic_bsz=use_dynamic_bsz, micro_batch_size=micro_batch_size, max_token_len=max_token_len)
                 if mpu.is_pipeline_last_stage(ignore_virtual=True):
                     # only on last rank. It should be on every tp rank
@@ -212,6 +215,7 @@ class MegatronPPOActor(BasePPOActor):
                     log_probs = torch.empty(size=(batch_size, response_length), dtype=torch.float32, device=input_ids.device)
 
                 # broadcast across pp ranks
+                print(f"megatron_actor torch.distributed.broadcast log_probs.shape={log_probs.shape}")
                 torch.distributed.broadcast(
                     tensor=log_probs,
                     src=mpu.get_pipeline_model_parallel_last_rank(),
@@ -240,6 +244,7 @@ class MegatronPPOActor(BasePPOActor):
                     )
 
         # add empty cache after each compute
+        print(f"megatron_actor compute_log_prob empty cache")
         torch.cuda.empty_cache()
 
         return log_probs, entropys
