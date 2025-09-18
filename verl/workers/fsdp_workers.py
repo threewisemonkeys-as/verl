@@ -850,12 +850,14 @@ class ActorRolloutRefWorker(Worker):
                 tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
+            print(f"fsdp worker: self.ulysses_sharding_manager.postprocess_data")
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
         output = output.to("cpu")
 
         # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
         # unshard the root FSDP module
+        print(f"unshard the root FSDP module")
         if self.world_size > 1 and fsdp_version(self.actor.actor_module) == 1:
             self.actor.actor_module._handle.reshard(True)
 
@@ -863,6 +865,7 @@ class ActorRolloutRefWorker(Worker):
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during compute_log_prob", logger=logger)
 
+        print(f"fsdp done with comput_log_prob")
         return output
 
     async def generate_async(self, prompts: DataProto = None, **kwargs):
