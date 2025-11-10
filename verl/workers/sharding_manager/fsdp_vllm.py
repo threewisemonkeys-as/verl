@@ -282,37 +282,49 @@ class FSDPVLLMShardingManager(BaseShardingManager):
                 return
             else:
 
-                def replace_lora_wrapper(k):
-                    """Replace LoRA parameter keys with base layer equivalents.
-
-                    Transforms LoRA parameter names to their corresponding base layer
-                    names for proper weight loading in vLLM when base model sync is not done.
-
-                    Args:
-                        k (str): Original parameter key name.
-
-                    Returns:
-                        str: Transformed parameter key for base layer.
-                    """
-                    stacked_params = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-                    if k.endswith(".weight"):
-                        module_k = k[: -len(".weight")]
-                        if check_exclude_modules(peft_config, module_k):
-                            return k
-                        elif any([module_k.endswith(s) for s in stacked_params]) or check_target_modules(
-                            peft_config, module_k
-                        ):
-                            return f"{module_k}.base_layer.weight"
-                    if k.endswith(".bias"):
-                        module_k = k[: -len(".bias")]
-                        if check_exclude_modules(peft_config, module_k):
-                            return k
-                        elif any([module_k.endswith(s) for s in stacked_params]) or check_target_modules(
-                            peft_config, module_k
-                        ):
-                            return f"{module_k}.base_layer.bias"
-                    return k
+                def replace_lora_wrapper(k: str) -> str:
+                    """Replace LoRA parameter keys with base-layer equivalents when base model
+                    isn't preloaded in vLLM. Idempotent and covers fused QKV."""
                 
+                    # Already transformed?
+                    if ".base_layer." in k:
+                        return k
+                
+                    # Leave norms/embeds/head alone unless explicitly targeted in peft_config
+                    if any(k.endswith(suf) for suf in (".norm.weight", ".norm.bias")):
+                        return k
+                    if any(seg in k for seg in ("embed_tokens", "lm_head")):
+                        # Allow explicit override by target_modules
+                        mod = k.rsplit(".", 1)[0]
+                        if not check_target_modules(peft_config, mod):
+                            return k
+                
+                    # Known linear stacks incl. fused + common aliases seen in Qwen forks
+                    stacked_params = {
+                        "q_proj", "k_proj", "v_proj", "qkv_proj",
+                        "o_proj", "gate_proj", "up_proj", "down_proj",
+                        # optional aliases you may see in some MLPs
+                        "w1", "w2", "w3", "wi", "wo",
+                    }
+                
+                    if k.endswith(".weight"):
+                        module_k = k[:-len(".weight")]
+                        if check_exclude_modules(peft_config, module_k):
+                            return k
+                        if module_k.split(".")[-1] in stacked_params or check_target_modules(peft_config, module_k):
+                            return f"{module_k}.base_layer.weight"
+                        return k
+                
+                    if k.endswith(".bias"):
+                        module_k = k[:-len(".bias")]
+                        if check_exclude_modules(peft_config, module_k):
+                            return k
+                        if module_k.split(".")[-1] in stacked_params or check_target_modules(peft_config, module_k):
+                            return f"{module_k}.base_layer.bias"
+                        return k
+                
+                    return k
+
                 updated_params = {replace_lora_wrapper(k): v for k, v in updated_params.items()}
 
         patch_vllm_moe_model_weight_loader(model)
