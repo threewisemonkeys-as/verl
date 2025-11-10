@@ -280,13 +280,38 @@ class FSDPVLLMShardingManager(BaseShardingManager):
                 logger.info(f"vLLM load weights, loaded_params: {len(updated_params)}")
                 return
             else:
+
                 def replace_lora_wrapper(k):
-                    stacked_params = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
-                    if any([k.endswith(f"{s}.weight") for s in stacked_params]):
-                        return k.replace(".weight", ".base_layer.weight")
-                    if any([k.endswith(f"{s}.bias") for s in stacked_params]):
-                        return k.replace(".bias", ".base_layer.bias")
+                    """Replace LoRA parameter keys with base layer equivalents.
+
+                    Transforms LoRA parameter names to their corresponding base layer
+                    names for proper weight loading in vLLM when base model sync is not done.
+
+                    Args:
+                        k (str): Original parameter key name.
+
+                    Returns:
+                        str: Transformed parameter key for base layer.
+                    """
+                    stacked_params = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+                    if k.endswith(".weight"):
+                        module_k = k[: -len(".weight")]
+                        if check_exclude_modules(peft_config, module_k):
+                            return k
+                        elif any([module_k.endswith(s) for s in stacked_params]) or check_target_modules(
+                            peft_config, module_k
+                        ):
+                            return f"{module_k}.base_layer.weight"
+                    if k.endswith(".bias"):
+                        module_k = k[: -len(".bias")]
+                        if check_exclude_modules(peft_config, module_k):
+                            return k
+                        elif any([module_k.endswith(s) for s in stacked_params]) or check_target_modules(
+                            peft_config, module_k
+                        ):
+                            return f"{module_k}.base_layer.bias"
                     return k
+                
                 updated_params = {replace_lora_wrapper(k): v for k, v in updated_params.items()}
 
         patch_vllm_moe_model_weight_loader(model)
