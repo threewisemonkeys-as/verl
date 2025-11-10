@@ -145,7 +145,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
                                     continue
                                 name = name.replace("_fsdp_wrapped_module.","").replace(".base_layer","")
                                 lora_params[name] = param.full_tensor().detach().cpu() if hasattr(param, 'full_tensor') else param.detach().cpu()
-                            model = model.to(orig_dev)
+                            # model = model.to(orig_dev)
                     torch.cuda.empty_cache()
             else:
                 if self.base_sync_done:
@@ -159,7 +159,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
                             continue
                         name = name.replace("_fsdp_wrapped_module.","").replace(".base_layer","")
                         lora_params[name] = param.detach().cpu()
-                    model = model.to(orig_dev)
+                    # model = model.to(orig_dev)
             return lora_params
 
         # NOTE: Basically, we only need `get_torch_device().empty_cache()` before vllm wake_up and
