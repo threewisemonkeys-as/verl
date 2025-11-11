@@ -358,6 +358,19 @@ class FSDPVLLMShardingManager(BaseShardingManager):
 
                 updated_params = {replace_lora_wrapper(k): v for k, v in updated_params.items()}
 
+        # Sample expected keys from vLLM model to see what it wants around the failing name
+        want = [
+            "layers.0.self_attn.qkv_proj.base_layer.weight",
+            "layers.0.self_attn.o_proj.base_layer.weight",
+        ]
+        missing = [w for w in want if w not in updated_params]
+        if missing:
+            logger.warning(f"Missing after rewrite: {missing}")
+        
+        # Also list what you *do* have under that prefix for inspection
+        have = [k for k in updated_params.keys() if k.startswith("layers.0.self_attn.")]
+        logger.info("First 10 under layers.0.self_attn.: " + ", ".join(have[:10]))
+                
         patch_vllm_moe_model_weight_loader(model)
         device = get_torch_device().current_device()  # used when fsdp2 set cpu_offload_policy
         loaded_params = model.load_weights(((name, param.to(device, non_blocking=True).full_tensor() if isinstance(param, DTensor) else param) for name, param in updated_params.items()))
