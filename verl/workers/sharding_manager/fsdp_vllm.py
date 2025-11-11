@@ -283,47 +283,78 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             else:
 
                 def replace_lora_wrapper(k: str) -> str:
-                    """Replace LoRA parameter keys with base-layer equivalents when base model
-                    isn't preloaded in vLLM. Idempotent and covers fused QKV."""
+                    """Normalize HF/FSDP param keys to what vLLM-Qwen expects when base
+                    weights aren't preloaded (i.e., add `.base_layer` appropriately)."""
                 
-                    # Already transformed?
+                    # 0) Already transformed? leave it.
                     if ".base_layer." in k:
                         return k
                 
-                    # Leave norms/embeds/head alone unless explicitly targeted in peft_config
-                    if any(k.endswith(suf) for suf in (".norm.weight", ".norm.bias")):
-                        return k
-                    if any(seg in k for seg in ("embed_tokens", "lm_head")):
-                        # Allow explicit override by target_modules
-                        mod = k.rsplit(".", 1)[0]
-                        if not check_target_modules(peft_config, mod):
-                            return k
+                    # 1) Normalize module path aliases used in various HF Qwen variants
+                    #    vLLM uses `self_attn.*`; HF often uses `attention.*`
+                    k_norm = k.replace(".attention.", ".self_attn.")
                 
-                    # Known linear stacks incl. fused + common aliases seen in Qwen forks
-                    stacked_params = {
-                        "q_proj", "k_proj", "v_proj", "qkv_proj",
-                        "o_proj", "gate_proj", "up_proj", "down_proj",
-                        # optional aliases you may see in some MLPs
-                        "w1", "w2", "w3", "wi", "wo",
+                    # 2) Identify module name (without .weight/.bias) and last op token
+                    if k_norm.endswith(".weight"):
+                        module_k, suffix = k_norm[:-len(".weight")], "weight"
+                    elif k_norm.endswith(".bias"):
+                        module_k, suffix = k_norm[:-len(".bias")], "bias"
+                    else:
+                        return k_norm  # non-linear/tensor param; skip
+                
+                    # 3) If filters say exclude, keep as-is
+                    try:
+                        if check_exclude_modules(peft_config, module_k):
+                            return k_norm
+                    except NameError:
+                        pass  # allow use without filter helpers
+                
+                    # 4) Known linear stacks and aliases (HF → vLLM)
+                    #    - fused packed projection aliases map to qkv_proj
+                    last = module_k.split(".")[-1]
+                    alias_map = {
+                        "W_pack":  "qkv_proj",
+                        "c_attn":  "qkv_proj",   # some llama-like forks
+                        "qkv":     "qkv_proj",   # rare short alias
+                        # identity aliases for clarity:
+                        "q_proj":  "q_proj",
+                        "k_proj":  "k_proj",
+                        "v_proj":  "v_proj",
+                        "qkv_proj":"qkv_proj",
+                        "o_proj":  "o_proj",
+                        "gate_proj":"gate_proj",
+                        "up_proj": "up_proj",
+                        "down_proj":"down_proj",
+                        # occasional MLP aliases seen in forks:
+                        "w1":"w1", "w2":"w2", "w3":"w3", "wi":"wi", "wo":"wo",
                     }
                 
-                    if k.endswith(".weight"):
-                        module_k = k[:-len(".weight")]
-                        if check_exclude_modules(peft_config, module_k):
-                            return k
-                        if module_k.split(".")[-1] in stacked_params or check_target_modules(peft_config, module_k):
-                            return f"{module_k}.base_layer.weight"
-                        return k
+                    # 5) If not an obvious linear stack but explicitly targeted by PEFT, still add base_layer
+                    targeted = False
+                    try:
+                        targeted = check_target_modules(peft_config, module_k)
+                    except NameError:
+                        pass
                 
-                    if k.endswith(".bias"):
-                        module_k = k[:-len(".bias")]
-                        if check_exclude_modules(peft_config, module_k):
-                            return k
-                        if module_k.split(".")[-1] in stacked_params or check_target_modules(peft_config, module_k):
-                            return f"{module_k}.base_layer.bias"
-                        return k
+                    mapped_last = alias_map.get(last)
+                    is_linear_like = mapped_last is not None or targeted
                 
-                    return k
+                    if not is_linear_like:
+                        # leave norms/embeds/head alone unless targeted
+                        if last.endswith("norm") or ".norm." in module_k or "embed_tokens" in module_k or "lm_head" in module_k:
+                            return k_norm
+                        return k_norm
+                
+                    # 6) Apply alias (e.g., attention.W_pack -> self_attn.qkv_proj)
+                    if mapped_last is not None and mapped_last != last:
+                        module_k = ".".join(module_k.split(".")[:-1] + [mapped_last])
+                
+                    # 7) Idempotently insert `.base_layer` before final suffix
+                    parts = module_k.split(".")
+                    if len(parts) >= 1 and parts[-1] != "base_layer":
+                        module_k = ".".join(parts + ["base_layer"])
+                
+                    return f"{module_k}.{suffix}"
 
                 updated_params = {replace_lora_wrapper(k): v for k, v in updated_params.items()}
 
