@@ -265,189 +265,189 @@ class FSDPVLLMShardingManager(BaseShardingManager):
 
         return data.chunk(chunks=self.tp_size)[self.tp_rank]
 
-def update_params(self, updated_params, peft_config=None):
-    """
-    Load PEFT (LoRA) deltas into vLLM when base weights are not yet synced.
-    - Keeps 'model.' / 'transformer.' prefixes for Qwen3 under vLLM.
-    - Adds '.base_layer' only for linear stacks that are LoRA'd.
-    - Fuses split q/k/v into qkv along dim=0 (preserving .base_layer).
-    """
-    model = self.model_runner.model
-
-    if peft_config:
-        # If base already synced into vLLM, push LoRA via TensorLoRARequest
-        if self.base_sync_done:
-            lora_int_id = int(time.time_ns() % 0x7FFFFFFF)
-            lora_request = TensorLoRARequest(
-                lora_name=f"{lora_int_id}",
-                lora_int_id=lora_int_id,
-                lora_path="simon_lora_path",
-                peft_config=asdict(peft_config),
-                lora_tensors=updated_params,
-            )
-            self.inference_engine.llm_engine.add_lora(lora_request)
-            logger.info(f"vLLM load weights (LoRA add), loaded_params: {len(updated_params)}")
-            return
-        else:
-            # Do not pre-rewrite here; we run a single canonicalization pass below.
-            pass
-
-    def _strip_prefixes(k: str) -> str:
-        """Remove only PEFT/HF wrapper 'base_model.model.'.
-        Keep 'model.' / 'transformer.' because Qwen3 under vLLM expects them.
+    def update_params(self, updated_params, peft_config=None):
         """
-        p = "base_model.model."
-        return k[len(p):] if k.startswith(p) else k
-
-    def _maybe_add_base_layer(k: str, peft_cfg) -> str:
-        """Insert '.base_layer' for LoRA-targeted linear stacks when base is not preloaded."""
-        if ".base_layer." in k:
-            return k
-
-        # Don't touch norms/embeds/head unless explicitly targeted.
-        if any(k.endswith(suf) for suf in (".norm.weight", ".norm.bias")):
-            return k
-        if any(seg in k for seg in ("embed_tokens", "lm_head")):
-            mod = k.rsplit(".", 1)[0]
-            try:
-                if not check_target_modules(peft_cfg, mod):
-                    return k
-            except NameError:
-                return k
-
-        stacked = {
-            "q_proj", "k_proj", "v_proj", "qkv_proj",
-            "o_proj", "gate_proj", "up_proj", "down_proj",
-            "w1", "w2", "w3", "wi", "wo",
-        }
-
-        if k.endswith(".weight"):
-            mod = k[:-len(".weight")]
-            try:
-                if check_exclude_modules(peft_cfg, mod):
-                    return k
-            except NameError:
-                pass
-            try:
-                targeted = check_target_modules(peft_cfg, mod)
-            except NameError:
-                targeted = False
-            if mod.split(".")[-1] in stacked or targeted:
-                return f"{mod}.base_layer.weight"
-            return k
-
-        if k.endswith(".bias"):
-            mod = k[:-len(".bias")]
-            try:
-                if check_exclude_modules(peft_cfg, mod):
-                    return k
-            except NameError:
-                pass
-            try:
-                targeted = check_target_modules(peft_cfg, mod)
-            except NameError:
-                targeted = False
-            if mod.split(".")[-1] in stacked or targeted:
-                return f"{mod}.base_layer.bias"
-            return k
-
-        return k
-
-    def _fuse_qkv(params: dict):
-        """Fuse split q/k/v into qkv along dim=0. Preserve `.base_layer` if any split had it.
-        Expected split keys:
-          layers.{i}.self_attn.{q_proj|k_proj|v_proj}[.base_layer].{weight|bias}
-        Produces:
-          layers.{i}.self_attn.qkv_proj[.base_layer].{weight|bias}
+        Load PEFT (LoRA) deltas into vLLM when base weights are not yet synced.
+        - Keeps 'model.' / 'transformer.' prefixes for Qwen3 under vLLM.
+        - Adds '.base_layer' only for linear stacks that are LoRA'd.
+        - Fuses split q/k/v into qkv along dim=0 (preserving .base_layer).
         """
-        out = dict(params)
-        from collections import defaultdict
-        groups = defaultdict(dict)
-
-        for name in list(out.keys()):
-            if (".self_attn.q_proj" in name) or (".self_attn.k_proj" in name) or (".self_attn.v_proj" in name):
-                layer_prefix = name.split(".self_attn.", 1)[0]  # e.g., 'layers.0'
-                has_base = ".base_layer." in name
-                is_weight = name.endswith(".weight")
-                is_bias = name.endswith(".bias")
-                if not (is_weight or is_bias):
-                    continue
-                kind = "weight" if is_weight else "bias"
-                proj = (
-                    "q_proj" if ".self_attn.q_proj" in name else
-                    "k_proj" if ".self_attn.k_proj" in name else
-                    "v_proj"
+        model = self.model_runner.model
+    
+        if peft_config:
+            # If base already synced into vLLM, push LoRA via TensorLoRARequest
+            if self.base_sync_done:
+                lora_int_id = int(time.time_ns() % 0x7FFFFFFF)
+                lora_request = TensorLoRARequest(
+                    lora_name=f"{lora_int_id}",
+                    lora_int_id=lora_int_id,
+                    lora_path="simon_lora_path",
+                    peft_config=asdict(peft_config),
+                    lora_tensors=updated_params,
                 )
-                key = (layer_prefix, has_base, kind)
-                groups[key][proj] = name
-
-        for (layer_prefix, has_base, kind), d in list(groups.items()):
-            if not all(p in d for p in ("q_proj", "k_proj", "v_proj")):
-                continue
-            qk, kk, vk = d["q_proj"], d["k_proj"], d["v_proj"]
-            tgt = f"{layer_prefix}.self_attn.qkv_proj"
-            if has_base:
-                tgt += ".base_layer"
-            tgt += f".{kind}"
-
-            # Concatenate along out_features (dim=0)
-            fused = torch.cat([out[qk], out[kk], out[vk]], dim=0)
-            out[tgt] = fused
-
-            # Remove split entries
-            del out[qk]; del out[kk]; del out[vk]
-
-        return out
-
-    def _canonicalize_params_for_vllm(params, peft_cfg, add_base_layer: bool):
-        # 1) Strip only outer PEFT wrapper prefix.
-        p = { _strip_prefixes(k): v for k, v in params.items() }
-
-        # 2) Optional: add `.base_layer` to LoRA-targeted stacks (when base not preloaded).
-        if peft_cfg and add_base_layer:
-            p = { _maybe_add_base_layer(k, peft_cfg): v for k, v in p.items() }
-
-        # 3) Fuse q/k/v into qkv if needed.
-        p = _fuse_qkv(p)
-        return p
-
-    # vLLM-specific patch for MoE (no-op for non-MoE)
-    patch_vllm_moe_model_weight_loader(model)
-
-    device = get_torch_device().current_device()  # used when fsdp2 set cpu_offload_policy
-    needs_base_layer = bool(peft_config) and not self.base_sync_done
-
-    # Single, idempotent canonicalization pass
-    canon = _canonicalize_params_for_vllm(updated_params, peft_config, add_base_layer=needs_base_layer)
-
-    # Post-rewrite sanity checks (helpful logs if something is still off)
-    want = [
-        "layers.0.self_attn.qkv_proj.base_layer.weight",
-        "layers.0.self_attn.o_proj.base_layer.weight",
-    ]
-    missing = [w for w in want if w not in canon]
-    if missing:
-        logger.warning(f"[vLLM canon] Missing after canonicalize: {missing}")
-    have = [k for k in canon.keys() if k.startswith("layers.0.self_attn.")]
-    logger.info("[vLLM canon] First 10 under layers.0.self_attn.: " + ", ".join(have[:10]))
-    emb = [k for k in canon.keys() if "embed_tokens" in k][:5]
-    if not emb:
-        logger.info("[vLLM canon] No embed_tokens* keys found; expected 'model.embed_tokens.weight' if present.")
-
-    # Load into vLLM
-    loaded_params = model.load_weights(
-        (
+                self.inference_engine.llm_engine.add_lora(lora_request)
+                logger.info(f"vLLM load weights (LoRA add), loaded_params: {len(updated_params)}")
+                return
+            else:
+                # Do not pre-rewrite here; we run a single canonicalization pass below.
+                pass
+    
+        def _strip_prefixes(k: str) -> str:
+            """Remove only PEFT/HF wrapper 'base_model.model.'.
+            Keep 'model.' / 'transformer.' because Qwen3 under vLLM expects them.
+            """
+            p = "base_model.model."
+            return k[len(p):] if k.startswith(p) else k
+    
+        def _maybe_add_base_layer(k: str, peft_cfg) -> str:
+            """Insert '.base_layer' for LoRA-targeted linear stacks when base is not preloaded."""
+            if ".base_layer." in k:
+                return k
+    
+            # Don't touch norms/embeds/head unless explicitly targeted.
+            if any(k.endswith(suf) for suf in (".norm.weight", ".norm.bias")):
+                return k
+            if any(seg in k for seg in ("embed_tokens", "lm_head")):
+                mod = k.rsplit(".", 1)[0]
+                try:
+                    if not check_target_modules(peft_cfg, mod):
+                        return k
+                except NameError:
+                    return k
+    
+            stacked = {
+                "q_proj", "k_proj", "v_proj", "qkv_proj",
+                "o_proj", "gate_proj", "up_proj", "down_proj",
+                "w1", "w2", "w3", "wi", "wo",
+            }
+    
+            if k.endswith(".weight"):
+                mod = k[:-len(".weight")]
+                try:
+                    if check_exclude_modules(peft_cfg, mod):
+                        return k
+                except NameError:
+                    pass
+                try:
+                    targeted = check_target_modules(peft_cfg, mod)
+                except NameError:
+                    targeted = False
+                if mod.split(".")[-1] in stacked or targeted:
+                    return f"{mod}.base_layer.weight"
+                return k
+    
+            if k.endswith(".bias"):
+                mod = k[:-len(".bias")]
+                try:
+                    if check_exclude_modules(peft_cfg, mod):
+                        return k
+                except NameError:
+                    pass
+                try:
+                    targeted = check_target_modules(peft_cfg, mod)
+                except NameError:
+                    targeted = False
+                if mod.split(".")[-1] in stacked or targeted:
+                    return f"{mod}.base_layer.bias"
+                return k
+    
+            return k
+    
+        def _fuse_qkv(params: dict):
+            """Fuse split q/k/v into qkv along dim=0. Preserve `.base_layer` if any split had it.
+            Expected split keys:
+              layers.{i}.self_attn.{q_proj|k_proj|v_proj}[.base_layer].{weight|bias}
+            Produces:
+              layers.{i}.self_attn.qkv_proj[.base_layer].{weight|bias}
+            """
+            out = dict(params)
+            from collections import defaultdict
+            groups = defaultdict(dict)
+    
+            for name in list(out.keys()):
+                if (".self_attn.q_proj" in name) or (".self_attn.k_proj" in name) or (".self_attn.v_proj" in name):
+                    layer_prefix = name.split(".self_attn.", 1)[0]  # e.g., 'layers.0'
+                    has_base = ".base_layer." in name
+                    is_weight = name.endswith(".weight")
+                    is_bias = name.endswith(".bias")
+                    if not (is_weight or is_bias):
+                        continue
+                    kind = "weight" if is_weight else "bias"
+                    proj = (
+                        "q_proj" if ".self_attn.q_proj" in name else
+                        "k_proj" if ".self_attn.k_proj" in name else
+                        "v_proj"
+                    )
+                    key = (layer_prefix, has_base, kind)
+                    groups[key][proj] = name
+    
+            for (layer_prefix, has_base, kind), d in list(groups.items()):
+                if not all(p in d for p in ("q_proj", "k_proj", "v_proj")):
+                    continue
+                qk, kk, vk = d["q_proj"], d["k_proj"], d["v_proj"]
+                tgt = f"{layer_prefix}.self_attn.qkv_proj"
+                if has_base:
+                    tgt += ".base_layer"
+                tgt += f".{kind}"
+    
+                # Concatenate along out_features (dim=0)
+                fused = torch.cat([out[qk], out[kk], out[vk]], dim=0)
+                out[tgt] = fused
+    
+                # Remove split entries
+                del out[qk]; del out[kk]; del out[vk]
+    
+            return out
+    
+        def _canonicalize_params_for_vllm(params, peft_cfg, add_base_layer: bool):
+            # 1) Strip only outer PEFT wrapper prefix.
+            p = { _strip_prefixes(k): v for k, v in params.items() }
+    
+            # 2) Optional: add `.base_layer` to LoRA-targeted stacks (when base not preloaded).
+            if peft_cfg and add_base_layer:
+                p = { _maybe_add_base_layer(k, peft_cfg): v for k, v in p.items() }
+    
+            # 3) Fuse q/k/v into qkv if needed.
+            p = _fuse_qkv(p)
+            return p
+    
+        # vLLM-specific patch for MoE (no-op for non-MoE)
+        patch_vllm_moe_model_weight_loader(model)
+    
+        device = get_torch_device().current_device()  # used when fsdp2 set cpu_offload_policy
+        needs_base_layer = bool(peft_config) and not self.base_sync_done
+    
+        # Single, idempotent canonicalization pass
+        canon = _canonicalize_params_for_vllm(updated_params, peft_config, add_base_layer=needs_base_layer)
+    
+        # Post-rewrite sanity checks (helpful logs if something is still off)
+        want = [
+            "layers.0.self_attn.qkv_proj.base_layer.weight",
+            "layers.0.self_attn.o_proj.base_layer.weight",
+        ]
+        missing = [w for w in want if w not in canon]
+        if missing:
+            logger.warning(f"[vLLM canon] Missing after canonicalize: {missing}")
+        have = [k for k in canon.keys() if k.startswith("layers.0.self_attn.")]
+        logger.info("[vLLM canon] First 10 under layers.0.self_attn.: " + ", ".join(have[:10]))
+        emb = [k for k in canon.keys() if "embed_tokens" in k][:5]
+        if not emb:
+            logger.info("[vLLM canon] No embed_tokens* keys found; expected 'model.embed_tokens.weight' if present.")
+    
+        # Load into vLLM
+        loaded_params = model.load_weights(
             (
-                name,
                 (
-                    param.to(device, non_blocking=True).full_tensor()
-                    if isinstance(param, DTensor)
-                    else param.to(device, non_blocking=True)
-                ),
+                    name,
+                    (
+                        param.to(device, non_blocking=True).full_tensor()
+                        if isinstance(param, DTensor)
+                        else param.to(device, non_blocking=True)
+                    ),
+                )
+                for name, param in canon.items()
             )
-            for name, param in canon.items()
         )
-    )
-
-    self.base_sync_done = True
-    logger.info(f"vLLM load weights, loaded_params: {len(loaded_params) if loaded_params else -1}")
+    
+        self.base_sync_done = True
+        logger.info(f"vLLM load weights, loaded_params: {len(loaded_params) if loaded_params else -1}")
